@@ -3,5 +3,5 @@
 This repository serves as a demo for integrating FusionAuth with WordPress. Run with
 
 ```bash
-docker-compose -d
+docker compose up -d
 ```
