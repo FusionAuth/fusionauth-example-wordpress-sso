@@ -30,58 +30,94 @@ services:
       WORDPRESS_DB_USER: ${MYSQL_USER}
       WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
       WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
-
   db:
-    image: postgres:15
+    image: postgres:16.0-bookworm
     environment:
       PGDATA: /var/lib/postgresql/data/pgdata
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
-      - wf
+      - db_net
     restart: unless-stopped
     volumes:
       - db_data:/var/lib/postgresql/data
 
+  search:
+    image: opensearchproject/opensearch:2.11.0
+    environment:
+      cluster.name: fusionauth
+      discovery.type: single-node
+      node.name: search
+      plugins.security.disabled: true
+      bootstrap.memory_lock: true
+      OPENSEARCH_JAVA_OPTS: ${OPENSEARCH_JAVA_OPTS}
+    healthcheck:
+      interval: 10s
+      retries: 80
+      test: curl --write-out 'HTTP %{http_code}' --fail --silent --output /dev/null http://localhost:9200/
+    restart: unless-stopped
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - 9200:9200 # REST API
+      - 9600:9600 # Performance Analyzer
+    volumes:
+      - search_data:/usr/share/opensearch/data
+    networks:
+      - search_net
+
   fusionauth:
     image: fusionauth/fusionauth-app:latest
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+      search:
+        condition: service_healthy
     environment:
       DATABASE_URL: jdbc:postgresql://db:5432/fusionauth
-      # Prior to version 1.19.0, use this deprecated name
-      # DATABASE_ROOT_USER: ${POSTGRES_USER}
       DATABASE_ROOT_USERNAME: ${POSTGRES_USER}
       DATABASE_ROOT_PASSWORD: ${POSTGRES_PASSWORD}
-      # Prior to version 1.19.0, use this deprecated name
-      # DATABASE_USER: ${DATABASE_USER}
       DATABASE_USERNAME: ${DATABASE_USERNAME}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
-      # Prior to version 1.19.0, use this deprecated names
-      # FUSIONAUTH_MEMORY: ${FUSIONAUTH_MEMORY}
-      # FUSIONAUTH_SEARCH_ENGINE_TYPE: database
-      # FUSIONAUTH_URL: http://fusionauth:9011
-      # FUSIONAUTH_RUNTIME_MODE: development
       FUSIONAUTH_APP_MEMORY: ${FUSIONAUTH_APP_MEMORY}
-      FUSIONAUTH_APP_RUNTIME_MODE: development
+      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_APP_RUNTIME_MODE}
       FUSIONAUTH_APP_URL: http://fusionauth:9011
-      SEARCH_TYPE: database
-
+      SEARCH_SERVERS: http://search:9200
+      SEARCH_TYPE: elasticsearch
+      FUSIONAUTH_APP_KICKSTART_FILE: ${FUSIONAUTH_APP_KICKSTART_FILE}
     networks:
-     - wf
+      - db_net
+      - search_net
+      - wf
     restart: unless-stopped
     ports:
       - 9011:9011
     volumes:
-      - fa_config:/usr/local/fusionauth/config
+      - fusionauth_config:/usr/local/fusionauth/config
+      - ./kickstart:/usr/local/fusionauth/kickstart
 
 
 networks:
   wf:
     driver: bridge
+  db_net:
+    driver: bridge
+  search_net:
+    driver: bridge
 
 volumes:
   db_data:
-  fa_config:
+  fusionauth_config:
+  search_data:
   wdb_data:
   wordpress:
